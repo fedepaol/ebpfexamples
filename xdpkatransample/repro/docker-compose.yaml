@@ -1,0 +1,70 @@
+---
+version: '3'
+services:
+
+    client:
+        build:
+          context: .
+          dockerfile: Dockerfile
+        image: testfedora
+        privileged: true
+        entrypoint: /data/client_setup.sh
+        volumes:
+          - ./setup:/data
+        networks:
+            client:
+                ipv4_address: 10.111.220.11
+    gateway:
+        build:
+          context: .
+          dockerfile: Dockerfile
+        privileged: true
+        volumes:
+          - ./setup:/data
+        entrypoint: /data/gateway_setup.sh
+        networks:
+            client:
+              ipv4_address: 10.111.220.12
+            katran:
+              ipv4_address: 10.111.221.12
+            real:
+              ipv4_address: 10.111.222.12
+    katran:
+        privileged: true
+        build:
+          context: .
+          dockerfile: Dockerfile
+        volumes:
+          - ./setup:/data
+        entrypoint: /data/katran_setup.sh
+        networks:
+            katran:
+              ipv4_address: 10.111.221.11
+    real:
+        privileged: true
+        build:
+          context: .
+          dockerfile: Dockerfile
+        volumes:
+          - ./setup:/data
+        entrypoint: /data/real_setup.sh
+        networks:
+            real:
+              ipv4_address: 10.111.222.11
+networks:
+    client:
+        driver: "macvlan"
+        ipam:
+            config:
+                - subnet: 10.111.220.1/24
+    katran:
+        driver: "macvlan"
+        ipam:
+            config:
+                - subnet: 10.111.221.1/24
+    real:
+        driver: "macvlan"
+        ipam:
+            config:
+                - subnet: 10.111.222.1/24
+
