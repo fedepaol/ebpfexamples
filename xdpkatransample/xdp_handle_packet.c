@@ -1,7 +1,8 @@
 //go:build ignore
 
-#include "bpf_endian.h"
-#include "common.h"
+#include "vmlinux.h"
+#include "bpf_core_read.h"
+#include "bpf_tracing.h"
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
@@ -15,50 +16,63 @@ struct {
 	__type(value, __u32); // packet count
 } xdp_stats_map SEC(".maps");
 
-/*
-Attempt to parse the IPv4 source address from the packet.
-Returns 0 if there is no IPv4 header field; otherwise returns non-zero.
-*/
-static __always_inline int parse_ip_src_addr(struct xdp_md *ctx, __u32 *ip_src_addr) {
-	void *data_end = (void *)(long)ctx->data_end;
-	void *data     = (void *)(long)ctx->data;
 
-	// First, parse the ethernet header.
-	struct ethhdr *eth = data;
-	if ((void *)(eth + 1) > data_end) {
-		return 0;
-	}
+__attribute__((__always_inline__)) static inline __u16 csum_fold_helper(
+    __u64 csum) {
+  int i;
+#pragma unroll
+  for (i = 0; i < 4; i++) {
+    if (csum >> 16)
+      csum = (csum & 0xffff) + (csum >> 16);
+  }
+  return ~csum;
+}
 
-	if (eth->h_proto != bpf_htons(ETH_P_IP)) {
-		// The protocol is not IPv4, so we can't parse an IPv4 source address.
-		return 0;
-	}
+__attribute__((__always_inline__)) static inline void ipv4_csum_inline(
+    void* iph,
+    __u64* csum) {
+  __u16* next_iph_u16 = (__u16*)iph;
+#pragma clang loop unroll(full)
+  for (int i = 0; i < sizeof(struct iphdr) >> 1; i++) {
+    *csum += *next_iph_u16++;
+  }
+  *csum = csum_fold_helper(*csum);
+}
 
-	// Then parse the IP header.
-	struct iphdr *ip = (void *)(eth + 1);
-	if ((void *)(ip + 1) > data_end) {
-		return 0;
-	}
-
-	// Return the source IP address in network byte order.
-	*ip_src_addr = (__u32)(ip->saddr);
-	return 1;
+__attribute__((__always_inline__)) static inline void create_v4_hdr(
+    struct iphdr* iph,
+    __u8 tos,
+    __u32 saddr,
+    __u32 daddr,
+    __u16 pkt_bytes,
+    __u8 proto) {
+  __u64 csum = 0;
+  iph->version = 4;
+  iph->ihl = 5;
+  iph->frag_off = 0;
+  iph->protocol = proto;
+  iph->check = 0;
+  
+  iph->tot_len = bpf_htons(pkt_bytes + sizeof(struct iphdr));
+  iph->daddr = daddr;
+  iph->saddr = saddr;
+  iph->ttl = 64;
+  ipv4_csum_inline(iph, &csum);
+  iph->check = csum;
 }
 
 __attribute__((__always_inline__)) static inline bool encap_v4(
     struct xdp_md* xdp,
-    struct ctl_value* cval,
-    struct packet_description* pckt,
-    struct real_definition* dst,
+	__u8[6] dst_mac,
+	__u32 saddr,
+	__u32 daddr,
     __u32 pkt_bytes) {
   void* data;
   void* data_end;
   struct iphdr* iph;
   struct ethhdr* new_eth;
   struct ethhdr* old_eth;
-  __u32 ip_suffix = bpf_htons(pckt->flow.port16[0]);
-  ip_suffix <<= 16;
-  ip_suffix ^= pckt->flow.src;
+  
   __u64 csum = 0;
   // ipip encap
   if (bpf_xdp_adjust_head(xdp, 0 - (int)sizeof(struct iphdr))) {
@@ -72,20 +86,25 @@ __attribute__((__always_inline__)) static inline bool encap_v4(
   if (new_eth + 1 > data_end || old_eth + 1 > data_end || iph + 1 > data_end) {
     return false;
   }
-  memcpy(new_eth->h_dest, cval->mac, 6);
+  memcpy(new_eth->h_dest, dst_mac, 6);
   memcpy(new_eth->h_source, old_eth->h_dest, 6);
   new_eth->h_proto = BE_ETH_P_IP;
 
   create_v4_hdr(
       iph,
-      pckt->tos,
-      ((0xFFFF0000 & ip_suffix) | IPIP_V4_PREFIX),
-      dst->dst,
+      saddr,
+      daddr,
       pkt_bytes,
       IPPROTO_IPIP);
 
   return true;
 }
+
+struct arguments  {
+	__u8[6] dst_mac,
+	__u32 daddr,
+};
+
 
 SEC("xdp")
 int xdp_prog_func(struct xdp_md *ctx) {
