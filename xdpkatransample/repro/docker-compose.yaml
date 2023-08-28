@@ -1,0 +1,64 @@
+---
+version: '3'
+services:
+
+    client:
+        build:
+          context: .
+        image: testfedora
+        privileged: true
+        entrypoint: /data/client_setup.sh
+        volumes:
+          - ./setup:/data
+        networks:
+            client:
+                ipv4_address: 10.111.220.11
+    gateway:
+        image: testfedora
+        privileged: true
+        volumes:
+          - ./setup:/data
+        entrypoint: /data/gateway_setup.sh
+        mac_address: 00-B0-D0-63-C2-26
+        networks:
+            client:
+              ipv4_address: 10.111.220.12
+            katran:
+              ipv4_address: 10.111.221.12
+            real:
+              ipv4_address: 10.111.222.12
+    katran:
+        privileged: true
+        image: testfedora
+        volumes:
+          - ./setup:/data
+        entrypoint: /data/katran_setup.sh
+        networks:
+            katran:
+              ipv4_address: 10.111.221.11
+    real:
+        privileged: true
+        image: testfedora
+        volumes:
+          - ./setup:/data
+        entrypoint: /data/real_setup.sh
+        networks:
+            real:
+              ipv4_address: 10.111.222.11
+networks:
+    client:
+        driver: "bridge"
+        ipam:
+            config:
+                - subnet: 10.111.220.1/24
+    katran:
+        driver: "bridge"
+        ipam:
+            config:
+                - subnet: 10.111.221.1/24
+    real:
+        driver: "bridge"
+        ipam:
+            config:
+                - subnet: 10.111.222.1/24
+
