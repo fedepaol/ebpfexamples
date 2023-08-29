@@ -1,20 +1,30 @@
 //go:build ignore
 
 #include "vmlinux.h"
-#include "bpf_core_read.h"
-#include "bpf_tracing.h"
+#include "bpf_endian.h"
+#include "bpf/bpf_helpers.h"
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
-#define MAX_MAP_ENTRIES 16
+#define MAX_MAP_ENTRIES 1
+#define BE_ETH_P_IP 8
 
-/* Define an LRU hash map for storing packet count by source IPv4 address */
+#ifndef memcpy
+#define memcpy(dest, src, n) __builtin_memcpy((dest), (src), (n))
+#endif
+
+struct   {
+	__u8 dst_mac[6];
+	__u32 daddr;
+	__u32 saddr;
+} arguments;
+
 struct {
-	__uint(type, BPF_MAP_TYPE_LRU_HASH);
+	__uint(type, BPF_MAP_TYPE_ARRAY);
 	__uint(max_entries, MAX_MAP_ENTRIES);
-	__type(key, __u32);   // source IPv4 address
-	__type(value, __u32); // packet count
-} xdp_stats_map SEC(".maps");
+	__type(key, __u32);
+	__type(value, arguments);
+} xdp_params_array SEC(".maps");
 
 
 __attribute__((__always_inline__)) static inline __u16 csum_fold_helper(
@@ -41,7 +51,6 @@ __attribute__((__always_inline__)) static inline void ipv4_csum_inline(
 
 __attribute__((__always_inline__)) static inline void create_v4_hdr(
     struct iphdr* iph,
-    __u8 tos,
     __u32 saddr,
     __u32 daddr,
     __u16 pkt_bytes,
@@ -63,7 +72,7 @@ __attribute__((__always_inline__)) static inline void create_v4_hdr(
 
 __attribute__((__always_inline__)) static inline bool encap_v4(
     struct xdp_md* xdp,
-	__u8[6] dst_mac,
+	__u8 *dst_mac,
 	__u32 saddr,
 	__u32 daddr,
     __u32 pkt_bytes) {
@@ -100,32 +109,45 @@ __attribute__((__always_inline__)) static inline bool encap_v4(
   return true;
 }
 
-struct arguments  {
-	__u8[6] dst_mac,
-	__u32 daddr,
-};
-
+/*
 
 SEC("xdp")
 int xdp_prog_func(struct xdp_md *ctx) {
-	__u32 ip;
-	if (!parse_ip_src_addr(ctx, &ip)) {
-		// Not an IPv4 packet, so don't count it.
-		goto done;
+	void* data = (void*)(long)ctx->data;
+	void* data_end = (void*)(long)ctx->data_end;
+	struct ethhdr* eth = data;
+	__u32 eth_proto;
+	__u32 nh_off;
+	nh_off = sizeof(struct ethhdr);
+
+	if (data + nh_off > data_end) {
+		return XDP_DROP;
+	}
+	eth_proto = eth->h_proto;
+	if (eth_proto == BE_ETH_P_IPV6) {
+		return XDP_PASS;
 	}
 
-	__u32 *pkt_count = bpf_map_lookup_elem(&xdp_stats_map, &ip);
-	if (!pkt_count) {
-		// No entry in the map for this IP address yet, so set the initial value to 1.
-		__u32 init_pkt_count = 1;
-		bpf_map_update_elem(&xdp_stats_map, &ip, &init_pkt_count, BPF_ANY);
-	} else {
-		// Entry already exists for this IP address,
-		// so increment it atomically using an LLVM built-in.
-		__sync_fetch_and_add(pkt_count, 1);
+	struct iphdr* iph;
+
+	iph = data + sizeof(struct ethhdr);
+    if (iph + sizeof(struct iphdr) > ctx->data_end) {
+      return XDP_DROP;
+    }
+    
+    if (iph->protocol != IPPROTO_TCP) {
+		return XDP_PASS;
+	}
+    payload_len = bpf_ntohs(iph->tot_len);
+   
+   	arguments* args;
+  	params = bpf_map_lookup_elem(&xdp_params_array, &args);
+	if (!params) {
+		return XDP_PASS;
 	}
 
-done:
-	// Try changing this to XDP_DROP and see what happens!
+	encap_v4(ctx, params->dst_mac, params->saddr, params->daddr, payload_len)
+
 	return XDP_PASS;
 }
+*/
