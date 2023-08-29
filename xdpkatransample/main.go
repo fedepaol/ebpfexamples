@@ -9,14 +9,13 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"net"
-	"os"
 	"strings"
-	"time"
 
-	"github.com/cilium/ebpf"
+	"github.com/PraserX/ipconv"
 	"github.com/cilium/ebpf/link"
 )
 
@@ -24,20 +23,27 @@ import (
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -type arguments lb xdp_lb.c -- -I./include
 
 func main() {
-	if len(os.Args) < 2 {
-		log.Fatalf("Please specify a network interface")
-	}
+	var (
+		dstMac     string
+		endpointIP string
+		attachTo   string
+		myIP       string
+	)
 
-	// Look up the network interface by name.
-	ifaceName := os.Args[1]
-	iface, err := net.InterfaceByName(ifaceName)
+	flag.StringVar(&dstMac, "destmac", "", "the mac address of the next hop")
+	flag.StringVar(&endpointIP, "endpoint", "", "the ip of the endpoint")
+	flag.StringVar(&myIP, "myip", "", "the ip of the lb")
+	flag.StringVar(&attachTo, "attachto", "", "the interface to attach this program to")
+	flag.Parse()
+
+	iface, err := net.InterfaceByName(attachTo)
 	if err != nil {
-		log.Fatalf("lookup network iface %q: %s", ifaceName, err)
+		log.Fatalf("lookup network iface %q: %s", attachTo, err)
 	}
 
 	// Load pre-compiled programs into the kernel.
-	objs := bpfObjects{}
-	if err := loadBpfObjects(&objs, nil); err != nil {
+	objs := lbObjects{}
+	if err := loadLbObjects(&objs, nil); err != nil {
 		log.Fatalf("loading objects: %s", err)
 	}
 	defer objs.Close()
@@ -55,30 +61,42 @@ func main() {
 	log.Printf("Attached XDP program to iface %q (index %d)", iface.Name, iface.Index)
 	log.Printf("Press Ctrl-C to exit and remove the program")
 
-	// Print the contents of the BPF hash map (source IP address -> packet count).
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-	for range ticker.C {
-		s, err := formatMapContents(objs.XdpStatsMap)
-		if err != nil {
-			log.Printf("Error reading map: %s", err)
-			continue
-		}
-		log.Printf("Map contents:\n%s", s)
+	mac, err := macToBytes(dstMac)
+	if err != nil {
+		fmt.Printf("failed to convert %s to bytes", dstMac)
+		panic(err)
 	}
+	var macArray [6]uint8
+	copy(macArray[:], mac)
+	intDest, err := ipconv.IPv4ToInt(net.ParseIP(endpointIP))
+	if err != nil {
+		fmt.Printf("failed to convert %s to int", endpointIP)
+		panic(err)
+	}
+	intSrc, err := ipconv.IPv4ToInt(net.ParseIP(myIP))
+	if err != nil {
+		fmt.Printf("failed to convert %s to int", myIP)
+		panic(err)
+	}
+
+	objs.XdpParamsArray.Put(0, lbArguments{
+		Daddr:  intDest,
+		Saddr:  intSrc,
+		DstMac: macArray,
+	})
+	select {}
 }
 
-func formatMapContents(m *ebpf.Map) (string, error) {
-	var (
-		sb  strings.Builder
-		key []byte
-		val uint32
-	)
-	iter := m.Iterate()
-	for iter.Next(&key, &val) {
-		sourceIP := net.IP(key) // IPv4 source address in network byte order.
-		packetCount := val
-		sb.WriteString(fmt.Sprintf("\t%s => %d\n", sourceIP, packetCount))
+func macToBytes(mac string) ([]uint8, error) {
+	mac = strings.Replace(mac, ":", "", -1)
+
+	// Parse the MAC address string into a hardware address
+	macAddr, err := net.ParseMAC(mac)
+	if err != nil {
+		return nil, fmt.Errorf("Error parsing MAC address: %w", err)
 	}
-	return sb.String(), iter.Err()
+
+	// Convert the hardware address to an array of bytes
+	macBytes := macAddr[:]
+	return macBytes, nil
 }
