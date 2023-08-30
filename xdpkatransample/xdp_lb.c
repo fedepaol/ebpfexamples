@@ -64,7 +64,7 @@ __attribute__((__always_inline__)) static inline void create_v4_hdr(
     __u16 pkt_bytes,
     __u8 proto)
 {
-  __u64 csum = 0;
+  /*__u64 csum = 0;
   iph->version = 4;
   iph->ihl = 5;
   iph->frag_off = 0;
@@ -76,7 +76,7 @@ __attribute__((__always_inline__)) static inline void create_v4_hdr(
   iph->saddr = saddr;
   iph->ttl = 64;
   ipv4_csum_inline(iph, &csum);
-  iph->check = csum;
+  iph->check = csum;*/
 }
 
 __attribute__((__always_inline__)) static inline bool encap_v4(
@@ -108,7 +108,10 @@ __attribute__((__always_inline__)) static inline bool encap_v4(
     return false;
   }
   memcpy(new_eth->h_dest, dst_mac, 6);
-  /*memcpy(new_eth->h_source, old_eth->h_dest, 6);
+  if (old_eth->h_dest + 6 > data_end) {
+    return false;
+  }
+  memcpy(new_eth->h_source, old_eth->h_dest, 6);
   new_eth->h_proto = BE_ETH_P_IP;
 
   create_v4_hdr(
@@ -117,7 +120,7 @@ __attribute__((__always_inline__)) static inline bool encap_v4(
       daddr,
       pkt_bytes,
       IPPROTO_IPIP);
-*/
+
   return true;
 }
 
