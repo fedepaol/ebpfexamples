@@ -1,4 +1,4 @@
-//go:build ignore
+// go:build ignore
 
 #include "vmlinux.h"
 #include "bpf_endian.h"
@@ -19,6 +19,7 @@ struct arguments
   __u8 dst_mac[6];
   __u32 daddr;
   __u32 saddr;
+  __u32 vip;
 };
 
 struct arguments *unused __attribute__((unused));
@@ -64,7 +65,7 @@ __attribute__((__always_inline__)) static inline void create_v4_hdr(
     __u16 pkt_bytes,
     __u8 proto)
 {
-  /*__u64 csum = 0;
+  __u64 csum = 0;
   iph->version = 4;
   iph->ihl = 5;
   iph->frag_off = 0;
@@ -76,7 +77,7 @@ __attribute__((__always_inline__)) static inline void create_v4_hdr(
   iph->saddr = saddr;
   iph->ttl = 64;
   ipv4_csum_inline(iph, &csum);
-  iph->check = csum;*/
+  iph->check = csum;
 }
 
 __attribute__((__always_inline__)) static inline bool encap_v4(
@@ -103,12 +104,13 @@ __attribute__((__always_inline__)) static inline bool encap_v4(
   new_eth = data;
   iph = data + sizeof(struct ethhdr);
   old_eth = data + sizeof(struct iphdr);
-  if ((void *)new_eth + 1 > data_end || (void *)old_eth + 1 > data_end || (void *)iph + 1 > data_end)
+  if ((void *)new_eth + 1 > data_end || (void *)old_eth + 1 > data_end || (void *)iph + (sizeof(struct iphdr)) > data_end)
   {
     return false;
   }
   memcpy(new_eth->h_dest, dst_mac, 6);
-  if (old_eth->h_dest + 6 > data_end) {
+  if (old_eth->h_dest + 6 > data_end)
+  {
     return false;
   }
   memcpy(new_eth->h_source, old_eth->h_dest, 6);
@@ -134,7 +136,7 @@ int xdp_prog_func(struct xdp_md *ctx)
   __u32 nh_off;
   nh_off = sizeof(struct ethhdr);
 
-  if (data + nh_off +1 > data_end)
+  if (data + nh_off + 1 > data_end)
   {
     return XDP_DROP;
   }
@@ -144,29 +146,41 @@ int xdp_prog_func(struct xdp_md *ctx)
     return XDP_PASS;
   }
 
+  bpf_printk("got a packet");
+
   struct iphdr *iph;
 
   iph = data + sizeof(struct ethhdr);
-  if ((iph + sizeof(struct iphdr)) > ctx->data_end)
+  if ((iph + 1) > data_end)
   {
+    bpf_printk("malformed");
     return XDP_DROP;
   }
 
   if (iph->protocol != IPPROTO_TCP)
   {
+    bpf_printk("not tcp");
     return XDP_PASS;
   }
-  
+
   __u32 payload_len = bpf_ntohs(iph->tot_len);
 
-  struct arguments *foo = 0;
+  struct arguments *args = 0;
   __u32 key = 0;
-  foo = (struct arguments *)bpf_map_lookup_elem(&xdp_params_array, &key);
-  if (!foo)
+  args = (struct arguments *)bpf_map_lookup_elem(&xdp_params_array, &key);
+  if (!args)
   {
+    bpf_printk("no args");
     return XDP_PASS;
   }
-  
-  encap_v4(ctx, foo->dst_mac, foo->saddr, foo->daddr, payload_len);
-  return XDP_PASS;
+
+  if (args->vip != bpf_ntohs(iph->daddr))
+  {
+    bpf_printk("Not vip addr %d %d", args->vip, bpf_ntohs(iph->daddr));
+    return XDP_PASS;
+  }
+  encap_v4(ctx, args->dst_mac, args->saddr, args->daddr, payload_len);
+  bpf_printk("sending back");
+
+  return XDP_TX;
 }

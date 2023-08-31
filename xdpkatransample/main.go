@@ -20,7 +20,7 @@ import (
 )
 
 // $BPF_CLANG and $BPF_CFLAGS are set by the Makefile.
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -type arguments lb xdp_lb.c -- -I./include
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -type arguments lb ebpf/xdp_lb.c -- -I ebpf/include
 
 func main() {
 	var (
@@ -28,12 +28,15 @@ func main() {
 		endpointIP string
 		attachTo   string
 		myIP       string
+		vip        string
 	)
 
-	flag.StringVar(&dstMac, "destmac", "", "the mac address of the next hop")
+	flag.StringVar(&dstMac, "dest-mac", "", "the mac address of the next hop")
 	flag.StringVar(&endpointIP, "endpoint", "", "the ip of the endpoint")
-	flag.StringVar(&myIP, "myip", "", "the ip of the lb")
-	flag.StringVar(&attachTo, "attachto", "", "the interface to attach this program to")
+	flag.StringVar(&myIP, "my-ip", "", "the ip of the lb")
+	flag.StringVar(&attachTo, "attach-to", "", "the interface to attach this program to")
+	flag.StringVar(&vip, "vip", "", "the virtual ip")
+
 	flag.Parse()
 
 	iface, err := net.InterfaceByName(attachTo)
@@ -70,19 +73,23 @@ func main() {
 	copy(macArray[:], mac)
 	intDest, err := ipconv.IPv4ToInt(net.ParseIP(endpointIP))
 	if err != nil {
-		fmt.Printf("failed to convert %s to int", endpointIP)
 		panic(err)
 	}
 	intSrc, err := ipconv.IPv4ToInt(net.ParseIP(myIP))
 	if err != nil {
-		fmt.Printf("failed to convert %s to int", myIP)
 		panic(err)
 	}
+	intVip, err := ipconv.IPv4ToInt(net.ParseIP(vip))
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("vip user", intVip)
 
 	objs.XdpParamsArray.Put(0, lbArguments{
 		Daddr:  intDest,
 		Saddr:  intSrc,
 		DstMac: macArray,
+		Vip:    intVip,
 	})
 	select {}
 }
@@ -93,7 +100,7 @@ func macToBytes(mac string) ([]uint8, error) {
 	// Parse the MAC address string into a hardware address
 	macAddr, err := net.ParseMAC(mac)
 	if err != nil {
-		return nil, fmt.Errorf("Error parsing MAC address: %w", err)
+		return nil, fmt.Errorf("error parsing MAC address: %w", err)
 	}
 
 	// Convert the hardware address to an array of bytes

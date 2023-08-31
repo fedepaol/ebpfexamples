@@ -17,6 +17,7 @@ type lbArguments struct {
 	_      [2]byte
 	Daddr  uint32
 	Saddr  uint32
+	Vip    uint32
 }
 
 // loadLb returns the embedded CollectionSpec for lb.

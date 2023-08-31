@@ -5,6 +5,7 @@ services:
     client:
         build:
           context: .
+          dockerfile: Dockerfile
         image: testfedora
         privileged: true
         entrypoint: /data/client_setup.sh
@@ -14,7 +15,9 @@ services:
             client:
                 ipv4_address: 10.111.220.11
     gateway:
-        image: testfedora
+        build:
+          context: .
+          dockerfile: Dockerfile
         privileged: true
         volumes:
           - ./setup:/data
@@ -29,7 +32,9 @@ services:
               ipv4_address: 10.111.222.12
     katran:
         privileged: true
-        image: testfedora
+        build:
+          context: .
+          dockerfile: Dockerfile
         volumes:
           - ./setup:/data
         entrypoint: /data/katran_setup.sh
@@ -38,7 +43,9 @@ services:
               ipv4_address: 10.111.221.11
     real:
         privileged: true
-        image: testfedora
+        build:
+          context: .
+          dockerfile: Dockerfile
         volumes:
           - ./setup:/data
         entrypoint: /data/real_setup.sh
