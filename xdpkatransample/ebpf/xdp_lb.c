@@ -72,7 +72,7 @@ __attribute__((__always_inline__)) static inline void create_v4_hdr(
   iph->protocol = proto;
   iph->check = 0;
 
-  iph->tot_len = bpf_htons(pkt_bytes + sizeof(struct iphdr));
+  iph->tot_len = (pkt_bytes + sizeof(struct iphdr));
   iph->daddr = daddr;
   iph->saddr = saddr;
   iph->ttl = 64;
@@ -174,13 +174,13 @@ int xdp_prog_func(struct xdp_md *ctx)
     return XDP_PASS;
   }
 
-  if (args->vip != bpf_ntohs(iph->daddr))
+  bpf_printk("Args: dstmac[%d] daddr[%u] saddr[%u] vip [%u]", args->dst_mac, args->daddr, args->saddr, args->vip);
+  if (args->vip != bpf_htonl(iph->daddr))
   {
-    bpf_printk("Not vip addr %d %d", args->vip, bpf_ntohs(iph->daddr));
+    bpf_printk("Not vip addr %u %u %u", bpf_ntohl(iph->daddr), iph->daddr, bpf_htonl(iph->daddr));
     return XDP_PASS;
   }
-  encap_v4(ctx, args->dst_mac, args->saddr, args->daddr, payload_len);
-  bpf_printk("sending back");
-
+  bool res = encap_v4(ctx, args->dst_mac, bpf_htonl(args->saddr), bpf_htonl(args->daddr), payload_len);
+  bpf_printk("sending back %d", res);
   return XDP_TX;
 }

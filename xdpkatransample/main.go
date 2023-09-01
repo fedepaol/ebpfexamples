@@ -83,14 +83,18 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println("vip user", intVip)
-
-	objs.XdpParamsArray.Put(0, lbArguments{
+	args := lbArguments{
 		Daddr:  intDest,
 		Saddr:  intSrc,
 		DstMac: macArray,
 		Vip:    intVip,
-	})
+	}
+
+	fmt.Println("args", args)
+	err = objs.XdpParamsArray.Put(uint32(0), args)
+	if err != nil {
+		panic(err)
+	}
 	select {}
 }
 
