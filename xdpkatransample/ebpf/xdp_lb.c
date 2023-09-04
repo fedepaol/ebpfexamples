@@ -32,6 +32,7 @@ struct
   __type(value, struct arguments);
 } xdp_params_array SEC(".maps");
 
+/*
 __attribute__((__always_inline__)) static inline __u16 csum_fold_helper(
     __u64 csum)
 {
@@ -56,6 +57,38 @@ __attribute__((__always_inline__)) static inline void ipv4_csum_inline(
     *csum += *next_iph_u16++;
   }
   *csum = csum_fold_helper(*csum);
+}*/
+
+__attribute__((__always_inline__)) static inline __u16 csum_fold_helper(__u64 csum)
+{
+    int i;
+#pragma unroll
+    for (i = 0; i < 4; i++)
+    {
+        if (csum >> 16)
+            csum = (csum & 0xffff) + (csum >> 16);
+    }
+    return ~csum;
+}
+
+__attribute__((__always_inline__)) static inline void ipv4_csum(void *data_start, int data_size, __u64 *csum)
+{
+    *csum = bpf_csum_diff(0, 0, data_start, data_size, *csum);
+    *csum = csum_fold_helper(*csum);
+}
+
+__attribute__((__always_inline__)) static inline void ipv4_l4_csum(void *data_start, __u32 data_size,
+                                                                   __u64 *csum, struct iphdr *iph)
+{
+    __u32 tmp = 0;
+    *csum = bpf_csum_diff(0, 0, &iph->saddr, sizeof(__be32), *csum);
+    *csum = bpf_csum_diff(0, 0, &iph->daddr, sizeof(__be32), *csum);
+    tmp = __builtin_bswap32((__u32)(iph->protocol));
+    *csum = bpf_csum_diff(0, 0, &tmp, sizeof(__u32), *csum);
+    tmp = __builtin_bswap32((__u32)(data_size));
+    *csum = bpf_csum_diff(0, 0, &tmp, sizeof(__u32), *csum);
+    *csum = bpf_csum_diff(0, 0, data_start, data_size, *csum);
+    *csum = csum_fold_helper(*csum);
 }
 
 __attribute__((__always_inline__)) static inline void create_v4_hdr(
@@ -65,18 +98,23 @@ __attribute__((__always_inline__)) static inline void create_v4_hdr(
     __u16 pkt_bytes,
     __u8 proto)
 {
-  __u64 csum = 0;
   iph->version = 4;
   iph->ihl = 5;
   iph->frag_off = 0;
   iph->protocol = proto;
   iph->check = 0;
+  iph->tos=0;
 
-  iph->tot_len = (pkt_bytes + sizeof(struct iphdr));
+  iph->tot_len = bpf_htons(pkt_bytes + sizeof(struct iphdr));
   iph->daddr = daddr;
   iph->saddr = saddr;
   iph->ttl = 64;
-  ipv4_csum_inline(iph, &csum);
+
+
+  __u64 csum = 0;
+
+  iph->check = 0;
+  ipv4_csum(iph, sizeof(struct iphdr), &csum);
   iph->check = csum;
 }
 
@@ -173,6 +211,8 @@ int xdp_prog_func(struct xdp_md *ctx)
     bpf_printk("no args");
     return XDP_PASS;
   }
+  u32 saddr = 0;
+  saddr = iph->saddr; 
 
   bpf_printk("Args: dstmac[%d] daddr[%u] saddr[%u] vip [%u]", args->dst_mac, args->daddr, args->saddr, args->vip);
   if (args->vip != bpf_htonl(iph->daddr))
@@ -180,7 +220,15 @@ int xdp_prog_func(struct xdp_md *ctx)
     bpf_printk("Not vip addr %u %u %u", bpf_ntohl(iph->daddr), iph->daddr, bpf_htonl(iph->daddr));
     return XDP_PASS;
   }
-  bool res = encap_v4(ctx, args->dst_mac, bpf_htonl(args->saddr), bpf_htonl(args->daddr), payload_len);
+  bool res = encap_v4(ctx, args->dst_mac, saddr, bpf_htonl(args->daddr), payload_len);
   bpf_printk("sending back %d", res);
+  if (res == false) {
+    return XDP_ABORTED;
+  }
+
+  tcph = (void *)(long)ctx->data + (2 * sizeof(iphdr));
+  tcp_len = tcph->
+  ipv4_l4_csum(tcph, tcp_len, &csum, iph);
+
   return XDP_TX;
 }

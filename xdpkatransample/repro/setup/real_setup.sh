@@ -8,6 +8,7 @@ ip addr add 192.168.10.1 dev lo
 
 ip link add name ipip0 type ipip external
 ip link set up dev ipip0
+ip address add 127.0.0.42/32 dev ipip0
 
 # echo server
 python /data/echo.py

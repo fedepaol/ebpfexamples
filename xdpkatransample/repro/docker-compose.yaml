@@ -28,6 +28,7 @@ services:
               ipv4_address: 10.111.220.12
             katran:
               ipv4_address: 10.111.221.12
+              priority: 100
             real:
               ipv4_address: 10.111.222.12
     katran:
