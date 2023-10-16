@@ -1,0 +1,3 @@
+[submodule "sslwriteuprobe/libbpf"]
+	path = sslwriteuprobe/libbpf
+	url = https://github.com/libbpf/libbpf.git
